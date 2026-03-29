@@ -7,22 +7,32 @@ and outputs a clean Excel file ready for ClimateBERT classification.
 Uses PyMuPDF's block extraction, where each "block" roughly corresponds
 to a paragraph — which is exactly the unit of analysis ClimateBERT expects.
 
+PDF naming convention (required):
+    BankName_Year_ReportType.pdf
+
+    Examples:
+        UBS_2024_Sustainability.pdf
+        HSBC_2023_Annual.pdf
+        BNP-Paribas_2024_Pillar3.pdf
+        Deutsche-Bank_2023_Sustainability.pdf
+
+    Rules:
+        - Use hyphens (-) within bank names that have spaces
+        - Year must be 4 digits
+        - ReportType: Annual, Sustainability, or Pillar3
+        - Separated by underscores (_)
+
 Output format (one row per paragraph):
     paragraph_id | bank | year | report_type | paragraph | word_count
 
+Output filename (auto-generated):
+    results/parsed/bankname_year_reporttype_YYYY-MM-DD.xlsx
+
 Usage (from Colab notebook):
-    from pdf_parser import parse_pdf, parse_multiple_pdfs
+    from pdf_parser import parse_pdf
 
-    # Single PDF
-    df = parse_pdf(
-        "data/ubs_sr_2024.pdf",
-        bank_name="UBS",
-        year=2024,
-        report_type="Sustainability",
-    )
-
-    # Multiple PDFs in a folder (with metadata CSV)
-    df = parse_multiple_pdfs("data/pdfs/", metadata_csv="data/pdf_metadata.csv")
+    # Just pass the PDF path — everything else is extracted from the filename
+    df, output_file = parse_pdf("data/pdfs/UBS_2024_Sustainability.pdf")
 """
 
 import pymupdf
@@ -60,13 +70,65 @@ BOILERPLATE_PATTERNS = [
 OUTPUT_DIR = "results/parsed"
 
 
-def generate_output_filename(bank_name: str, year: int, output_dir: str = OUTPUT_DIR) -> str:
+# ============================================================
+# Filename parsing and output naming
+# ============================================================
+
+def parse_filename(pdf_path: str) -> dict:
+    """
+    Extract bank name, year, and report type from the PDF filename.
+
+    Expected format: BankName_Year_ReportType.pdf
+    Examples:
+        UBS_2024_Sustainability.pdf     → bank="UBS", year=2024, report_type="Sustainability"
+        BNP-Paribas_2023_Annual.pdf     → bank="BNP Paribas", year=2023, report_type="Annual"
+        Deutsche-Bank_2024_Pillar3.pdf  → bank="Deutsche Bank", year=2024, report_type="Pillar3"
+
+    Parameters
+    ----------
+    pdf_path : str
+        Path to the PDF file.
+
+    Returns
+    -------
+    dict with keys: bank_name, year, report_type
+    """
+    stem = Path(pdf_path).stem  # e.g. "UBS_2024_Sustainability"
+    parts = stem.split("_")
+
+    if len(parts) != 3:
+        raise ValueError(
+            f"Filename '{Path(pdf_path).name}' does not match expected format: "
+            f"BankName_Year_ReportType.pdf\n"
+            f"Examples: UBS_2024_Sustainability.pdf, HSBC_2023_Annual.pdf"
+        )
+
+    bank_name = parts[0].replace("-", " ")  # "BNP-Paribas" → "BNP Paribas"
+
+    try:
+        year = int(parts[1])
+    except ValueError:
+        raise ValueError(
+            f"Could not parse year from '{parts[1]}' in filename '{Path(pdf_path).name}'. "
+            f"Expected 4-digit year, e.g. UBS_2024_Sustainability.pdf"
+        )
+
+    report_type = parts[2]
+
+    return {
+        "bank_name": bank_name,
+        "year": year,
+        "report_type": report_type,
+    }
+
+
+def generate_output_filename(bank_name: str, year: int, report_type: str, output_dir: str = OUTPUT_DIR) -> str:
     """
     Generate a unique output filename in the format:
-        results/parsed/BANKNAME_YEAR_YYYY-MM-DD.xlsx
+        results/parsed/bankname_year_reporttype_YYYY-MM-DD.xlsx
 
     Example:
-        results/parsed/UBS_2024_2026-03-29.xlsx
+        results/parsed/ubs_2024_sustainability_2026-03-29.xlsx
 
     Parameters
     ----------
@@ -74,6 +136,8 @@ def generate_output_filename(bank_name: str, year: int, output_dir: str = OUTPUT
         Name of the bank.
     year : int
         Report year.
+    report_type : str
+        Report type (Annual, Sustainability, Pillar3).
     output_dir : str
         Directory to save in (default: results/parsed/).
 
@@ -82,12 +146,10 @@ def generate_output_filename(bank_name: str, year: int, output_dir: str = OUTPUT
     str
         Full file path for the output Excel file.
     """
-    # Clean bank name: lowercase, replace spaces with underscores
-    clean_name = bank_name.lower().replace(" ", "_")
-    # Current date in YYYY-MM-DD format
+    clean_name = bank_name.lower().replace(" ", "-")
+    clean_type = report_type.lower()
     today = datetime.now().strftime("%Y-%m-%d")
-    # Build filename
-    filename = f"{clean_name}_{year}_{today}.xlsx"
+    filename = f"{clean_name}_{year}_{clean_type}_{today}.xlsx"
     return os.path.join(output_dir, filename)
 
 
@@ -161,7 +223,8 @@ def clean_paragraph(text: str) -> str:
        (PDF blocks often have hard line breaks mid-sentence)
     2. Fix hyphenation at line breaks (e.g., "sustain- ability" → "sustainability")
     3. Collapse multiple spaces
-    4. Strip leading/trailing whitespace
+    4. Remove characters that are illegal in Excel cells
+    5. Strip leading/trailing whitespace
     """
     # Replace newlines with spaces (PDF wraps lines within paragraphs)
     text = text.replace("\n", " ")
@@ -171,6 +234,9 @@ def clean_paragraph(text: str) -> str:
 
     # Collapse multiple spaces into one
     text = re.sub(r"\s+", " ", text)
+
+    # Remove characters illegal in Excel (control chars except tab/newline)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
 
     # Strip
     text = text.strip()
@@ -213,37 +279,38 @@ def generate_paragraph_id(bank_name: str, year: int, index: int) -> str:
 
 
 # ============================================================
-# Main parsing functions
+# Main parsing function
 # ============================================================
 
-def parse_pdf(
-    pdf_path: str,
-    bank_name: str,
-    year: int,
-    report_type: str = None,
-    output_path: str = None,
-) -> pd.DataFrame:
+def parse_pdf(pdf_path: str, output_path: str = None) -> tuple:
     """
     Parse a single PDF into a DataFrame of paragraphs.
+    Bank name, year, and report type are extracted from the filename.
+
+    Expected filename format: BankName_Year_ReportType.pdf
 
     Parameters
     ----------
     pdf_path : str
         Path to the PDF file.
-    bank_name : str
-        Name of the bank (e.g. "UBS").
-    year : int
-        Report year (e.g. 2024).
-    report_type : str, optional
-        E.g. "Sustainability", "Annual", "Pillar 3".
     output_path : str, optional
-        If provided, saves the DataFrame to this Excel path.
+        Override the auto-generated output path.
 
     Returns
     -------
-    pd.DataFrame
-        Columns: paragraph_id, bank, year, report_type, paragraph, word_count
+    tuple of (pd.DataFrame, str)
+        - DataFrame with columns: paragraph_id, bank, year, report_type, paragraph, word_count
+        - Path to the saved output file
     """
+    # Extract metadata from filename
+    meta = parse_filename(pdf_path)
+    bank_name = meta["bank_name"]
+    year = meta["year"]
+    report_type = meta["report_type"]
+
+    print(f"Parsing: {Path(pdf_path).name}")
+    print(f"  Bank: {bank_name} | Year: {year} | Type: {report_type}")
+
     doc = pymupdf.open(pdf_path)
 
     all_paragraphs = []
@@ -259,8 +326,8 @@ def parse_pdf(
     df = pd.DataFrame(all_paragraphs)
 
     if df.empty:
-        print(f"WARNING: No paragraphs extracted from {pdf_path}")
-        return df
+        print(f"  WARNING: No paragraphs extracted.")
+        return df, None
 
     # Add metadata columns
     df["bank"] = bank_name
@@ -279,37 +346,35 @@ def parse_pdf(
     # Reorder columns to match target format
     df = df[["paragraph_id", "bank", "year", "report_type", "paragraph", "word_count"]]
 
-    print(f"Extracted {len(df)} paragraphs from {Path(pdf_path).name}")
+    print(f"  Extracted {len(df)} paragraphs")
     print(f"  Word count range: {df['word_count'].min()} – {df['word_count'].max()}")
     print(f"  Mean word count: {df['word_count'].mean():.0f}")
 
     # Auto-generate output path if not provided
     if output_path is None:
-        output_path = generate_output_filename(bank_name, year)
+        output_path = generate_output_filename(bank_name, year, report_type)
 
     # Save results
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     df.to_excel(output_path, index=False)
     print(f"  Saved to: {output_path}")
 
-    return df
+    return df, output_path
 
 
-def parse_multiple_pdfs(
-    pdf_folder: str,
-    metadata_csv: str = None,
-    output_path: str = None,
-) -> pd.DataFrame:
+# ============================================================
+# Batch parsing function
+# ============================================================
+
+def parse_multiple_pdfs(pdf_folder: str, output_path: str = None) -> pd.DataFrame:
     """
     Parse all PDFs in a folder into a single combined DataFrame.
+    Each PDF filename must follow the convention: BankName_Year_ReportType.pdf
 
     Parameters
     ----------
     pdf_folder : str
         Path to folder containing PDF files.
-    metadata_csv : str, optional
-        Path to a CSV with columns: filename, bank, year, report_type
-        Each row maps a PDF filename to its metadata.
     output_path : str, optional
         If provided, saves the combined DataFrame to this Excel path.
 
@@ -318,14 +383,6 @@ def parse_multiple_pdfs(
     pd.DataFrame
         Combined paragraphs from all PDFs in target format.
     """
-    # Load metadata
-    if metadata_csv and os.path.exists(metadata_csv):
-        metadata = pd.read_csv(metadata_csv)
-        print(f"Loaded metadata for {len(metadata)} files")
-    else:
-        print("WARNING: No metadata CSV provided. Bank names will be inferred from filenames.")
-        metadata = None
-
     # Find all PDFs
     pdf_files = sorted(Path(pdf_folder).glob("*.pdf"))
     print(f"Found {len(pdf_files)} PDF files in {pdf_folder}\n")
@@ -333,31 +390,13 @@ def parse_multiple_pdfs(
     all_dfs = []
 
     for pdf_path in pdf_files:
-        # Look up metadata for this file
-        bank_name = pdf_path.stem  # Default: use filename
-        year = None
-        report_type = None
-
-        if metadata is not None:
-            match = metadata[metadata["filename"] == pdf_path.name]
-            if not match.empty:
-                row = match.iloc[0]
-                bank_name = row.get("bank", bank_name)
-                year = row.get("year")
-                report_type = row.get("report_type")
-            else:
-                print(f"  WARNING: No metadata found for {pdf_path.name}, skipping.")
-                continue
-
-        df = parse_pdf(
-            str(pdf_path),
-            bank_name=bank_name,
-            year=year,
-            report_type=report_type,
-        )
-
-        if not df.empty:
-            all_dfs.append(df)
+        try:
+            df, _ = parse_pdf(str(pdf_path))
+            if not df.empty:
+                all_dfs.append(df)
+        except ValueError as e:
+            print(f"  SKIPPED: {e}")
+            continue
 
     if not all_dfs:
         print("WARNING: No paragraphs extracted from any PDF.")
@@ -396,15 +435,10 @@ def parse_multiple_pdfs(
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 4:
-        print("Usage: python pdf_parser.py <input.pdf> <bank_name> <year> [report_type] [output.xlsx]")
-        print("Example: python pdf_parser.py data/ubs_sr_2024.pdf UBS 2024 Sustainability")
+    if len(sys.argv) < 2:
+        print("Usage: python pdf_parser.py <BankName_Year_ReportType.pdf>")
+        print("Example: python pdf_parser.py data/pdfs/UBS_2024_Sustainability.pdf")
         sys.exit(1)
 
     input_path = sys.argv[1]
-    bank = sys.argv[2]
-    yr = int(sys.argv[3])
-    rtype = sys.argv[4] if len(sys.argv) > 4 else None
-    out = sys.argv[5] if len(sys.argv) > 5 else "results/parsed_paragraphs.xlsx"
-
-    df = parse_pdf(input_path, bank_name=bank, year=yr, report_type=rtype, output_path=out)
+    df, out = parse_pdf(input_path)
