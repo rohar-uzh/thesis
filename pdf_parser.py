@@ -7,14 +7,22 @@ and outputs a clean Excel file ready for ClimateBERT classification.
 Uses PyMuPDF's block extraction, where each "block" roughly corresponds
 to a paragraph — which is exactly the unit of analysis ClimateBERT expects.
 
+Output format (one row per paragraph):
+    paragraph_id | bank | year | report_type | paragraph | word_count
+
 Usage (from Colab notebook):
     from pdf_parser import parse_pdf, parse_multiple_pdfs
 
     # Single PDF
-    df = parse_pdf("data/ubs_annual_report_2024.pdf", bank_name="UBS", year=2024)
+    df = parse_pdf(
+        "data/ubs_sr_2024.pdf",
+        bank_name="UBS",
+        year=2024,
+        report_type="Sustainability",
+    )
 
-    # Multiple PDFs
-    df = parse_multiple_pdfs("data/pdfs/")
+    # Multiple PDFs in a folder (with metadata CSV)
+    df = parse_multiple_pdfs("data/pdfs/", metadata_csv="data/pdf_metadata.csv")
 """
 
 import pymupdf
@@ -70,7 +78,7 @@ def extract_paragraphs_from_page(page, page_num: int) -> list:
     Returns
     -------
     list of dict
-        Each dict has keys: paragraph, page_num, block_num, bbox
+        Each dict has keys: paragraph, page_num
     """
     # Extract blocks, sort by reading order (top-to-bottom, left-to-right)
     blocks = page.get_text("blocks", sort=True)
@@ -104,8 +112,6 @@ def extract_paragraphs_from_page(page, page_num: int) -> list:
         paragraphs.append({
             "paragraph": text,
             "page_num": page_num,
-            "block_num": block[5],
-            "bbox": block[:4],  # Bounding box coordinates
         })
 
     return paragraphs
@@ -118,9 +124,9 @@ def clean_paragraph(text: str) -> str:
     Steps:
     1. Replace line breaks within the block with spaces
        (PDF blocks often have hard line breaks mid-sentence)
-    2. Collapse multiple spaces
-    3. Strip leading/trailing whitespace
-    4. Remove common artifacts
+    2. Fix hyphenation at line breaks (e.g., "sustain- ability" → "sustainability")
+    3. Collapse multiple spaces
+    4. Strip leading/trailing whitespace
     """
     # Replace newlines with spaces (PDF wraps lines within paragraphs)
     text = text.replace("\n", " ")
@@ -149,15 +155,38 @@ def is_boilerplate(text: str) -> bool:
     return False
 
 
+def generate_paragraph_id(bank_name: str, year: int, index: int) -> str:
+    """
+    Generate a unique paragraph ID in the format: BANK_YEAR_001
+
+    Parameters
+    ----------
+    bank_name : str
+        Bank name (spaces replaced with underscores, uppercased).
+    year : int
+        Report year.
+    index : int
+        1-based paragraph number.
+
+    Returns
+    -------
+    str
+        E.g. "UBS_2024_001", "HSBC_2023_042"
+    """
+    clean_name = bank_name.upper().replace(" ", "_")
+    return f"{clean_name}_{year}_{index:03d}"
+
+
 # ============================================================
 # Main parsing functions
 # ============================================================
 
 def parse_pdf(
     pdf_path: str,
-    bank_name: str = None,
-    year: int = None,
+    bank_name: str,
+    year: int,
     report_type: str = None,
+    output_path: str = None,
 ) -> pd.DataFrame:
     """
     Parse a single PDF into a DataFrame of paragraphs.
@@ -166,17 +195,19 @@ def parse_pdf(
     ----------
     pdf_path : str
         Path to the PDF file.
-    bank_name : str, optional
-        Name of the bank (added as metadata column).
-    year : int, optional
-        Report year (added as metadata column).
+    bank_name : str
+        Name of the bank (e.g. "UBS").
+    year : int
+        Report year (e.g. 2024).
     report_type : str, optional
-        E.g. "annual_report" or "sustainability_report".
+        E.g. "Sustainability", "Annual", "Pillar 3".
+    output_path : str, optional
+        If provided, saves the DataFrame to this Excel path.
 
     Returns
     -------
     pd.DataFrame
-        Columns: bank, year, report_type, page_num, paragraph
+        Columns: paragraph_id, bank, year, report_type, paragraph, word_count
     """
     doc = pymupdf.open(pdf_path)
 
@@ -197,16 +228,31 @@ def parse_pdf(
         return df
 
     # Add metadata columns
-    df["bank"] = bank_name or Path(pdf_path).stem
+    df["bank"] = bank_name
     df["year"] = year
     df["report_type"] = report_type
-    df["source_file"] = Path(pdf_path).name
 
-    # Reorder columns for clarity
-    cols = ["bank", "year", "report_type", "source_file", "page_num", "paragraph"]
-    df = df[[c for c in cols if c in df.columns]]
+    # Generate paragraph IDs (1-based)
+    df["paragraph_id"] = [
+        generate_paragraph_id(bank_name, year, i + 1)
+        for i in range(len(df))
+    ]
+
+    # Calculate word count
+    df["word_count"] = df["paragraph"].str.split().str.len()
+
+    # Reorder columns to match target format
+    df = df[["paragraph_id", "bank", "year", "report_type", "paragraph", "word_count"]]
 
     print(f"Extracted {len(df)} paragraphs from {Path(pdf_path).name}")
+    print(f"  Word count range: {df['word_count'].min()} – {df['word_count'].max()}")
+    print(f"  Mean word count: {df['word_count'].mean():.0f}")
+
+    # Save if requested
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        df.to_excel(output_path, index=False)
+        print(f"  Saved to: {output_path}")
 
     return df
 
@@ -225,31 +271,32 @@ def parse_multiple_pdfs(
         Path to folder containing PDF files.
     metadata_csv : str, optional
         Path to a CSV with columns: filename, bank, year, report_type
-        If provided, metadata is matched to each PDF by filename.
-        If not provided, bank name is inferred from filename.
+        Each row maps a PDF filename to its metadata.
     output_path : str, optional
         If provided, saves the combined DataFrame to this Excel path.
 
     Returns
     -------
     pd.DataFrame
-        Combined paragraphs from all PDFs.
+        Combined paragraphs from all PDFs in target format.
     """
-    # Load metadata if provided
-    metadata = None
+    # Load metadata
     if metadata_csv and os.path.exists(metadata_csv):
         metadata = pd.read_csv(metadata_csv)
         print(f"Loaded metadata for {len(metadata)} files")
+    else:
+        print("WARNING: No metadata CSV provided. Bank names will be inferred from filenames.")
+        metadata = None
 
     # Find all PDFs
     pdf_files = sorted(Path(pdf_folder).glob("*.pdf"))
-    print(f"Found {len(pdf_files)} PDF files in {pdf_folder}")
+    print(f"Found {len(pdf_files)} PDF files in {pdf_folder}\n")
 
     all_dfs = []
 
     for pdf_path in pdf_files:
         # Look up metadata for this file
-        bank_name = None
+        bank_name = pdf_path.stem  # Default: use filename
         year = None
         report_type = None
 
@@ -257,9 +304,12 @@ def parse_multiple_pdfs(
             match = metadata[metadata["filename"] == pdf_path.name]
             if not match.empty:
                 row = match.iloc[0]
-                bank_name = row.get("bank")
+                bank_name = row.get("bank", bank_name)
                 year = row.get("year")
                 report_type = row.get("report_type")
+            else:
+                print(f"  WARNING: No metadata found for {pdf_path.name}, skipping.")
+                continue
 
         df = parse_pdf(
             str(pdf_path),
@@ -275,9 +325,22 @@ def parse_multiple_pdfs(
         print("WARNING: No paragraphs extracted from any PDF.")
         return pd.DataFrame()
 
-    # Combine all
+    # Combine all DataFrames
     combined = pd.concat(all_dfs, ignore_index=True)
-    print(f"\nTotal: {len(combined)} paragraphs from {len(all_dfs)} reports")
+
+    # Re-generate unique paragraph IDs across the full dataset
+    new_ids = []
+    counters = {}
+    for _, row in combined.iterrows():
+        key = (row["bank"], row["year"])
+        counters[key] = counters.get(key, 0) + 1
+        new_ids.append(generate_paragraph_id(row["bank"], row["year"], counters[key]))
+    combined["paragraph_id"] = new_ids
+
+    print(f"\n{'='*50}")
+    print(f"Total: {len(combined)} paragraphs from {len(all_dfs)} reports")
+    print(f"Banks: {combined['bank'].nunique()}")
+    print(f"{'='*50}")
 
     # Save if requested
     if output_path:
@@ -295,18 +358,15 @@ def parse_multiple_pdfs(
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: python pdf_parser.py <input.pdf> [output.xlsx]")
-        print("       python pdf_parser.py <pdf_folder/> [output.xlsx]")
+    if len(sys.argv) < 4:
+        print("Usage: python pdf_parser.py <input.pdf> <bank_name> <year> [report_type] [output.xlsx]")
+        print("Example: python pdf_parser.py data/ubs_sr_2024.pdf UBS 2024 Sustainability")
         sys.exit(1)
 
     input_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else "results/parsed_paragraphs.xlsx"
+    bank = sys.argv[2]
+    yr = int(sys.argv[3])
+    rtype = sys.argv[4] if len(sys.argv) > 4 else None
+    out = sys.argv[5] if len(sys.argv) > 5 else "results/parsed_paragraphs.xlsx"
 
-    if os.path.isdir(input_path):
-        parse_multiple_pdfs(input_path, output_path=output_path)
-    else:
-        df = parse_pdf(input_path)
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        df.to_excel(output_path, index=False)
-        print(f"Saved to: {output_path}")
+    df = parse_pdf(input_path, bank_name=bank, year=yr, report_type=rtype, output_path=out)
