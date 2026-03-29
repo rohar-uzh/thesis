@@ -1,0 +1,17 @@
+# Data files (don't commit your Excel files to git)
+data/
+results/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.egg-info/
