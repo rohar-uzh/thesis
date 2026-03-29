@@ -29,6 +29,7 @@ import pymupdf
 import pandas as pd
 import re
 import os
+from datetime import datetime
 from pathlib import Path
 
 
@@ -54,6 +55,40 @@ BOILERPLATE_PATTERNS = [
     r"^sustainability report\s+\d{4}", # Repeated report title headers
     r"www\.\S+\.\S+",                  # URLs (likely footers)
 ]
+
+# Output directory for all parsed results
+OUTPUT_DIR = "results/parsed"
+
+
+def generate_output_filename(bank_name: str, year: int, output_dir: str = OUTPUT_DIR) -> str:
+    """
+    Generate a unique output filename in the format:
+        results/parsed/BANKNAME_YEAR_YYYY-MM-DD.xlsx
+
+    Example:
+        results/parsed/UBS_2024_2026-03-29.xlsx
+
+    Parameters
+    ----------
+    bank_name : str
+        Name of the bank.
+    year : int
+        Report year.
+    output_dir : str
+        Directory to save in (default: results/parsed/).
+
+    Returns
+    -------
+    str
+        Full file path for the output Excel file.
+    """
+    # Clean bank name: lowercase, replace spaces with underscores
+    clean_name = bank_name.lower().replace(" ", "_")
+    # Current date in YYYY-MM-DD format
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Build filename
+    filename = f"{clean_name}_{year}_{today}.xlsx"
+    return os.path.join(output_dir, filename)
 
 
 # ============================================================
@@ -248,11 +283,14 @@ def parse_pdf(
     print(f"  Word count range: {df['word_count'].min()} – {df['word_count'].max()}")
     print(f"  Mean word count: {df['word_count'].mean():.0f}")
 
-    # Save if requested
-    if output_path:
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        df.to_excel(output_path, index=False)
-        print(f"  Saved to: {output_path}")
+    # Auto-generate output path if not provided
+    if output_path is None:
+        output_path = generate_output_filename(bank_name, year)
+
+    # Save results
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    df.to_excel(output_path, index=False)
+    print(f"  Saved to: {output_path}")
 
     return df
 
