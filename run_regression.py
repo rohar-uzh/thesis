@@ -108,7 +108,7 @@ def load_characteristics(filepath: str) -> pd.DataFrame:
             f"Run:  python run_regression.py --create-template\n"
             f"to generate a blank template at that path."
         )
-    df = pd.read_excel(filepath)
+    df = pd.read_excel(filepath, header=4)
     required = set(CHARS_COLS.values())
     missing = required - set(df.columns)
     if missing:

@@ -198,8 +198,12 @@ def build_dqi_table(metrics_list: list) -> pd.DataFrame:
     df["z_specificity"] = zscore(df["specificity_ratio"]).round(4)
     df["z_commitment"]  = zscore(df["commitment_ratio"]).round(4)
 
-    # DQI = equally-weighted mean of z-scores
+    # DQI = equally-weighted mean of z-scores (main specification)
     df["dqi"] = df[["z_coverage", "z_specificity", "z_commitment"]].mean(axis=1).round(4)
+
+    # DQI_alt = raw average of unscaled ratios (robustness check)
+    # Not sample-relative, so comparable across different runs / subsamples
+    df["dqi_alt"] = df[["coverage", "specificity_ratio", "commitment_ratio"]].mean(axis=1).round(4)
 
     # ── Column order ──────────────────────────────────────────────────────────
     col_order = [
@@ -208,7 +212,7 @@ def build_dqi_table(metrics_list: list) -> pd.DataFrame:
         "specific_paragraphs", "specificity_ratio",
         "commitment_paragraphs", "commitment_ratio",
         "z_coverage", "z_specificity", "z_commitment",
-        "dqi",
+        "dqi", "dqi_alt",
     ]
     df = df[[c for c in col_order if c in df.columns]]
 
@@ -226,8 +230,10 @@ def print_summary(df: pd.DataFrame) -> None:
     print(f"  Coverage  — mean: {df['coverage'].mean():.3f}   std: {df['coverage'].std():.3f}")
     print(f"  Specificity ratio — mean: {df['specificity_ratio'].mean():.3f}   std: {df['specificity_ratio'].std():.3f}")
     print(f"  Commitment ratio  — mean: {df['commitment_ratio'].mean():.3f}   std: {df['commitment_ratio'].std():.3f}")
-    print(f"  DQI — mean: {df['dqi'].mean():.3f}   std: {df['dqi'].std():.3f}   "
+    print(f"  DQI     — mean: {df['dqi'].mean():.3f}   std: {df['dqi'].std():.3f}   "
           f"min: {df['dqi'].min():.3f}   max: {df['dqi'].max():.3f}")
+    print(f"  DQI_alt — mean: {df['dqi_alt'].mean():.3f}   std: {df['dqi_alt'].std():.3f}   "
+          f"min: {df['dqi_alt'].min():.3f}   max: {df['dqi_alt'].max():.3f}")
     print("=" * 65)
 
     print("\n  DQI Rankings (top to bottom):\n")
