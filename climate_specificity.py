@@ -41,7 +41,7 @@ def load_classifier():
     """
     device = 0 if torch.cuda.is_available() else -1
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, max_len=512)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
     clf = pipeline(
