@@ -129,6 +129,15 @@ def compute_metrics(base: str, spec_path: str, comm_path: str) -> dict:
         print(f"  ⚠  No matching paragraph_ids for: {base}  (skipped)")
         return None
 
+    # Warn if merge lost a significant number of rows
+    n_spec = len(spec_df)
+    n_comm = len(comm_df)
+    n_merged = len(df)
+    if n_merged < n_spec or n_merged < n_comm:
+        print(f"  ⚠  Merge mismatch for {base}: specificity had {n_spec} rows, "
+              f"commitment had {n_comm} rows, but only {n_merged} paragraph_ids matched. "
+              f"Check that both files were generated from the same detector output.")
+
     # ── Metadata ──────────────────────────────────────────────────────────────
     bank        = str(df["bank"].iloc[0])        if "bank"        in df.columns else base
     year        = int(df["year"].iloc[0])        if "year"        in df.columns else None
