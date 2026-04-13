@@ -17,7 +17,7 @@ Runs two specifications:
 
 Inputs:
     - DQI file:   results/dqi/<filename>.xlsx      (output of build_dqi.py)
-    - Bank chars: data/bank_characteristics.xlsx   (manually prepared)
+    - Bank chars: data/bank_data.xlsx              (Characteristics sheet)
 
 Output:
     - results/regression/regression_results_<date>.xlsx
@@ -25,7 +25,7 @@ Output:
 Usage:
     python run_regression.py
     python run_regression.py --dqi results/dqi/dqi_2026-04-12.xlsx
-    python run_regression.py --chars data/bank_characteristics.xlsx
+    python run_regression.py --chars data/bank_data.xlsx
 """
 
 import os
@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore")
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DQI_DIR   = os.path.join("results", "dqi")
-CHARS_PATH = os.path.join("data", "bank_characteristics.xlsx")
+CHARS_PATH = os.path.join("data", "bank_data.xlsx")
 OUT_DIR   = os.path.join("results", "regression")
 
 # Column names expected in DQI file (from build_dqi.py)
@@ -108,7 +108,7 @@ def load_characteristics(filepath: str) -> pd.DataFrame:
             f"Run:  python run_regression.py --create-template\n"
             f"to generate a blank template at that path."
         )
-    df = pd.read_excel(filepath, header=4)
+    df = pd.read_excel(filepath, sheet_name="Characteristics", header=0)
     required = set(CHARS_COLS.values())
     missing = required - set(df.columns)
     if missing:
