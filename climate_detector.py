@@ -119,7 +119,7 @@ def generate_output_filename(input_path: str) -> str:
 
     Example:
         input:  UBS_2023_Annual_2026-04-01.xlsx
-        output: results/detected/UBS_2023_Annual_detected_2026-04-12.xlsx
+        output: results/detector/UBS_2023_Annual_detected_2026-04-12.xlsx
     """
     base = os.path.splitext(os.path.basename(input_path))[0]
     # Remove any existing datestamp from parser output (last 11 chars if format _YYYY-MM-DD)
@@ -127,10 +127,10 @@ def generate_output_filename(input_path: str) -> str:
         base = base[:-11]
 
     today = date.today().isoformat()
-    output_dir = os.path.join("results", "detected")
+    output_dir = os.path.join("results", "detector")
     os.makedirs(output_dir, exist_ok=True)
 
-    return os.path.join(output_dir, f"{base}_detected_{today}.xlsx")
+    return os.path.join(output_dir, f"{base}_detector_{today}.xlsx")
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
