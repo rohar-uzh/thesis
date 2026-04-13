@@ -1,7 +1,9 @@
 transformers>=4.36.0
-datasets
 accelerate
 pandas
 openpyxl
 tqdm
 torch
+pymupdf
+statsmodels
+numpy
