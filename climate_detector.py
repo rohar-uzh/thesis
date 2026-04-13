@@ -118,19 +118,25 @@ def generate_output_filename(input_path: str) -> str:
     Auto-generate a datestamped output filename based on the input file.
 
     Example:
-        input:  UBS_2023_Annual_2026-04-01.xlsx
-        output: results/detector/UBS_2023_Annual_detected_2026-04-12.xlsx
+        input:  results/parsed/hsbc_2023_annual_2026-04-13.xlsx
+        output: results/detected/hsbc_2023_annual_detected_2026-04-13.xlsx
     """
     base = os.path.splitext(os.path.basename(input_path))[0]
-    # Remove any existing datestamp from parser output (last 11 chars if format _YYYY-MM-DD)
+
+    # Strip any existing stage suffix
+    for suffix in ("_detected", "_specificity", "_commitment"):
+        if suffix in base:
+            base = base[: base.index(suffix)]
+
+    # Strip trailing datestamp if present (_YYYY-MM-DD)
     if len(base) > 11 and base[-11] == "_":
         base = base[:-11]
 
     today = date.today().isoformat()
-    output_dir = os.path.join("results", "detector")
+    output_dir = os.path.join("results", "detected")
     os.makedirs(output_dir, exist_ok=True)
 
-    return os.path.join(output_dir, f"{base}_detector_{today}.xlsx")
+    return os.path.join(output_dir, f"{base}_detected_{today}.xlsx")
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
