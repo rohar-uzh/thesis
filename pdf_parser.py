@@ -13,12 +13,12 @@ PDF naming convention (required):
     Examples:
         UBS_2024_Sustainability.pdf
         HSBC_2023_Annual.pdf
-        Deutsche-Bank_2023_Sustainability.pdf
+        BNP-Paribas_2023_URD.pdf
 
     Rules:
         - Use hyphens (-) within bank names that have spaces
         - Year must be 4 digits
-        - ReportType: Annual, Sustainability
+        - ReportType: Annual, Sustainability, URD, Pillar 3 or similar
         - Separated by underscores (_)
 
 Output format (one row per paragraph):
@@ -136,7 +136,7 @@ def generate_output_filename(bank_name: str, year: int, report_type: str, output
     year : int
         Report year.
     report_type : str
-        Report type (Annual, Sustainability).
+        Report type (Annual, Sustainability, Pillar 3; URD).
     output_dir : str
         Directory to save in (default: results/parsed/).
 

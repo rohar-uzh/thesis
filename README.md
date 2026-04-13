@@ -44,8 +44,8 @@ thesis/
 ## PDF Naming Convention
 
 Input PDFs must follow the convention: `BankName_Year_ReportType.pdf`
-- Hyphens for multi-word names: `BNP-Paribas_2023_Annual.pdf`
-- Report types: `Annual`, `Sustainability`, `Pillar3`
+- Hyphens for multi-word names: `BNP-Paribas_2023_URD.pdf`
+- Report types: `Annual`, `Sustainability`, `Pillar3`, `URD`
 - The bank key extracted from the filename must match the `bank` column in `bank_data.xlsx`
 
 ## Pipeline Order
