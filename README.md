@@ -17,7 +17,7 @@ thesis/
 
 ## Workflow
 
-1. Edit Python modules locally (or via Claude)
+1. Edit Python modules locally
 2. `git push` to GitHub
 3. In Colab: `!cd /content/thesis && git pull`
 4. Run the notebook cells
@@ -25,5 +25,5 @@ thesis/
 ## Models Used
 
 - `climatebert/distilroberta-base-climate-detector` — binary climate paragraph detection
-- (Planned) `climatebert/distilroberta-base-climate-specificity`
-- (Planned) `climatebert/distilroberta-base-climate-commitment`
+- `climatebert/distilroberta-base-climate-specificity`
+- `climatebert/distilroberta-base-climate-commitment`
