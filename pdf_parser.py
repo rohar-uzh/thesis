@@ -13,13 +13,12 @@ PDF naming convention (required):
     Examples:
         UBS_2024_Sustainability.pdf
         HSBC_2023_Annual.pdf
-        BNP-Paribas_2024_Pillar3.pdf
         Deutsche-Bank_2023_Sustainability.pdf
 
     Rules:
         - Use hyphens (-) within bank names that have spaces
         - Year must be 4 digits
-        - ReportType: Annual, Sustainability, or Pillar3
+        - ReportType: Annual, Sustainability
         - Separated by underscores (_)
 
 Output format (one row per paragraph):
@@ -82,7 +81,7 @@ def parse_filename(pdf_path: str) -> dict:
     Examples:
         UBS_2024_Sustainability.pdf     → bank="UBS", year=2024, report_type="Sustainability"
         BNP-Paribas_2023_Annual.pdf     → bank="BNP Paribas", year=2023, report_type="Annual"
-        Deutsche-Bank_2024_Pillar3.pdf  → bank="Deutsche Bank", year=2024, report_type="Pillar3"
+
 
     Parameters
     ----------
@@ -137,7 +136,7 @@ def generate_output_filename(bank_name: str, year: int, report_type: str, output
     year : int
         Report year.
     report_type : str
-        Report type (Annual, Sustainability, Pillar3).
+        Report type (Annual, Sustainability).
     output_dir : str
         Directory to save in (default: results/parsed/).
 
