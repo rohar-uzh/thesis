@@ -22,7 +22,7 @@ PDF naming convention (required):
         - Separated by underscores (_)
 
 Output format (one row per paragraph):
-    paragraph_id | bank | year | report_type | paragraph | word_count
+    paragraph_id | bank | year | report_type | page_number| paragraph | word_count
 
 Output filename (auto-generated):
     results/parsed/bankname_year_reporttype_YYYY-MM-DD.xlsx
@@ -343,7 +343,7 @@ def parse_pdf(pdf_path: str, output_path: str = None) -> tuple:
     df["word_count"] = df["paragraph"].str.split().str.len()
 
     # Reorder columns to match target format
-    df = df[["paragraph_id", "bank", "year", "report_type", "paragraph", "word_count"]]
+    df = df[["paragraph_id", "bank", "year", "report_type", "page_num", "paragraph", "word_count"]]
 
     print(f"  Extracted {len(df)} paragraphs")
     print(f"  Word count range: {df['word_count'].min()} – {df['word_count'].max()}")
