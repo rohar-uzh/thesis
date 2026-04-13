@@ -48,6 +48,24 @@ Input PDFs must follow the convention: `BankName_Year_ReportType.pdf`
 - Report types: `Annual`, `Sustainability`, `Pillar3`
 - The bank key extracted from the filename must match the `bank` column in `bank_data.xlsx`
 
+## Pipeline Order
+
+```
+Step 1  pdf_parser.py           → Parse PDFs into paragraphs         (Colab)
+Step 2  climate_detector.py     → Label climate-related paragraphs   (Colab)
+                                          │
+                                ┌─────────┴─────────┐
+Step 3  climate_specificity.py  →        Step 4  climate_commitment.py
+        Specificity classifier           Commitment classifier
+        Input: detector output           Input: detector output
+        Output: results/specificity/     Output: results/commitment/
+                                └─────────┬─────────┘
+Step 5  build_dqi.py            → Merge outputs, construct DQI       (local)
+Step 6  run_regression.py       → Cross-sectional OLS regression     (local)
+```
+
+> Steps 3 and 4 are **independent and parallel** — both take the detector output directly and can be run in any order. Neither feeds into the other.
+
 ## Models Used
 
 | Model | Purpose |
