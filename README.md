@@ -15,7 +15,7 @@ thesis/
 ├── .gitignore
 │
 ├── notebooks/                      # Colab notebooks (gitignored)
-│   ├── climatebert_detector_colab.py
+│   ├── climatebert_detector_colab.ipynb
 │   ├── climatebert_specificity_colab.ipynb
 │   └── climatbert_commitment_colab.ipynb
 │
