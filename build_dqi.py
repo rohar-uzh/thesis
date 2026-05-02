@@ -139,10 +139,10 @@ def compute_metrics(base: str, spec_path: str, comm_path: str) -> dict:
               f"Check that both files were generated from the same detector output.")
 
     # ── Metadata ──────────────────────────────────────────────────────────────
-    bank        = str(df["bank"].iloc[0])        if "bank"        in df.columns else base
-    year        = int(df["year"].iloc[0])        if "year"        in df.columns else None
-    report_type = str(df["report_type"].iloc[0]) if "report_type" in df.columns else None
-
+    _parts      = base.split("_")
+    bank        = _parts[0]
+    year        = int(_parts[1]) if len(_parts) > 1 else None
+    report_type = _parts[2] if len(_parts) > 2 else None
     # ── Coverage ──────────────────────────────────────────────────────────────
     total_paragraphs   = len(df)
     climate_paragraphs = int((df["detector_label"] == "yes").sum())
