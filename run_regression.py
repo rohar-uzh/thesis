@@ -17,7 +17,7 @@ Runs two specifications:
 
 Inputs:
     - DQI file:   results/dqi/<filename>.xlsx      (output of build_dqi.py)
-    - Bank chars: data/bank_data.xlsx              (Characteristics sheet)
+    - Bank chars: data/bank_data.xlsx  
 
 Output:
     - results/regression/regression_results_<date>.xlsx
