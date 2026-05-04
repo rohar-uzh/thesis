@@ -44,36 +44,24 @@ warnings.filterwarnings("ignore")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-TCFD_DIR    = os.path.join("results", "tcfd")
-DQI_DIR     = os.path.join("results", "dqi")
-OUT_DIR     = os.path.join("results", "tcfd")
+TCFD_DIR  = os.path.join("results", "tcfd")
+DQI_DIR   = os.path.join("results", "dqi")
+OUT_DIR   = os.path.join("results", "tcfd")
 
-PILLARS             = ["governance", "strategy", "risk", "metrics"]
-DETECTOR_POSITIVE   = "yes"
+PILLARS           = ["governance", "strategy", "risk", "metrics"]
+DETECTOR_POSITIVE = "yes"
 
-# Map DQI display names → filename keys (same as run_regression.py)
-BANK_NAME_MAP = {
-    "ABN AMRO":             "ABN-AMRO",
-    "Alpha Bank":           "Alpha-Bank",
-    "BNP Paribas":          "BNP-Paribas",
-    "Banco BPM":            "Banco-BPM",
-    "Banco Sabadell":       "Banco-Sabadell",
-    "Banco Santander":      "Banco-Santander",
-    "Bank of Ireland":      "Bank-of-Ireland",
-    "Credit Agricole":      "Credit-Agricole",
-    "Danske Bank":          "Danske-Bank",
-    "Deutsche Bank":        "Deutsche-Bank",
-    "ING Group":            "ING",
-    "Intesa Sanpaolo":      "Intesa-Sanpaolo",
-    "Lloyds Banking Group": "Lloyds",
-    "Monte dei Paschi":     "Monte-dei-Paschi",
-    "NatWest Group":        "NatWest",
-    "OP Financial":         "OP-Financial",
-    "Societe Generale":     "Societe-Generale",
-    "Standard Chartered":   "Standard-Chartered",
-    "UBS Group":            "UBS",
-    "ZKB":                  "Zurcher-Kantonalbank",
-}
+
+# ── Key normalisation ──────────────────────────────────────────────────────────
+
+def _norm(key) -> str:
+    """
+    Normalise a bank key for merging: lowercase and strip whitespace.
+    Both TCFD files and the DQI file use filename-derived keys (e.g. 'UBS-Group',
+    'ubs-group') that differ only in casing — this makes the merge case-insensitive
+    without requiring a hardcoded name map.
+    """
+    return str(key).strip().lower()
 
 
 # ── Step 1: Load all TCFD files ────────────────────────────────────────────────
@@ -105,7 +93,7 @@ def load_tcfd_files(tcfd_dir: str) -> pd.DataFrame:
             print(f"  ⚠  Skipping {fname} — missing required columns")
             continue
 
-        bank = str(df["bank"].iloc[0])
+        bank = _norm(df["bank"].iloc[0])
         year = int(df["year"].iloc[0])
 
         climate   = df[df["detector_label"] == DETECTOR_POSITIVE]
@@ -126,16 +114,16 @@ def load_tcfd_files(tcfd_dir: str) -> pd.DataFrame:
         balance   = round(entropy / np.log(4), 4)
 
         rows.append({
-            "bank":           bank,
-            "year":           year,
-            "n_total":        n_total,
-            "n_climate":      n_climate,
-            "coverage":       round(n_climate / n_total, 4),
-            "pct_governance": round(props["governance"], 4),
-            "pct_strategy":   round(props["strategy"], 4),
-            "pct_risk":       round(props["risk"], 4),
-            "pct_metrics":    round(props["metrics"], 4),
-            "balance":        balance,
+            "bank":            bank,
+            "year":            year,
+            "n_total":         n_total,
+            "n_climate":       n_climate,
+            "coverage":        round(n_climate / n_total, 4),
+            "pct_governance":  round(props["governance"], 4),
+            "pct_strategy":    round(props["strategy"], 4),
+            "pct_risk":        round(props["risk"], 4),
+            "pct_metrics":     round(props["metrics"], 4),
+            "balance":         balance,
             "dominant_pillar": max(props, key=props.get),
         })
 
@@ -163,20 +151,19 @@ def compute_sample_averages(df: pd.DataFrame) -> pd.DataFrame:
         ("pct_metrics",    "Metrics / targets"),
         ("balance",        "Pillar balance (entropy)"),
     ]:
-        col = col_base
-        m23 = d23.loc[common, col].mean()
-        m24 = d24.loc[common, col].mean()
-        delta = (d24.loc[common, col] - d23.loc[common, col])
-        t_stat, p_val = stats.ttest_rel(d24.loc[common, col], d23.loc[common, col])
+        delta  = d24.loc[common, col_base] - d23.loc[common, col_base]
+        t_stat, p_val = stats.ttest_rel(
+            d24.loc[common, col_base], d23.loc[common, col_base]
+        )
         rows.append({
-            "Metric":       label,
-            "N pairs":      len(common),
-            "Mean 2023":    round(m23, 4),
-            "Mean 2024":    round(m24, 4),
-            "Delta":        round(delta.mean(), 4),
-            "Std delta":    round(delta.std(), 4),
-            "t-stat":       round(t_stat, 4),
-            "p-value":      round(p_val, 4),
+            "Metric":    label,
+            "N pairs":   len(common),
+            "Mean 2023": round(d23.loc[common, col_base].mean(), 4),
+            "Mean 2024": round(d24.loc[common, col_base].mean(), 4),
+            "Delta":     round(delta.mean(), 4),
+            "Std delta": round(delta.std(), 4),
+            "t-stat":    round(t_stat, 4),
+            "p-value":   round(p_val, 4),
             "Stars": (
                 "***" if p_val < 0.01 else
                 "**"  if p_val < 0.05 else
@@ -191,19 +178,44 @@ def compute_sample_averages(df: pd.DataFrame) -> pd.DataFrame:
 def compute_correlations(df_tcfd: pd.DataFrame, dqi_path: str) -> pd.DataFrame:
     """
     Merge TCFD summary with DQI file and compute Pearson correlations.
+
+    Both sides are normalised to lowercase before merging, so the join works
+    regardless of how casing differs between the two files.
     """
     dqi = pd.read_excel(dqi_path)
-    dqi["bank"] = dqi["bank"].replace(BANK_NAME_MAP)
+
+    # Normalise keys on both sides
+    df_tcfd = df_tcfd.copy()
+    df_tcfd["bank_key"] = df_tcfd["bank"].map(_norm)
+
+    dqi["bank_key"] = dqi["bank"].map(_norm)
+    dqi["year"]     = dqi["year"].astype(int)
 
     merged = pd.merge(
         df_tcfd,
-        dqi[["bank", "year", "coverage", "specificity_ratio",
+        dqi[["bank_key", "year", "coverage", "specificity_ratio",
              "commitment_ratio", "dqi", "dqi_alt"]],
-        on=["bank", "year"],
+        on=["bank_key", "year"],
         suffixes=("_tcfd", "_dqi"),
     )
 
     print(f"  ✓ Merged {len(merged)} rows for correlation analysis")
+
+    # Diagnostic if merge still fails
+    if len(merged) == 0:
+        tcfd_keys = sorted(df_tcfd["bank_key"].unique())
+        dqi_keys  = sorted(dqi["bank_key"].unique())
+        missing   = set(tcfd_keys) - set(dqi_keys)
+        print("  ✗ No rows matched. Check key mismatches:")
+        print(f"    TCFD keys  (sample): {tcfd_keys[:5]}")
+        print(f"    DQI  keys  (sample): {dqi_keys[:5]}")
+        if missing:
+            print(f"    Keys in TCFD but not DQI: {sorted(missing)}")
+        raise ValueError(
+            "Merge produced 0 rows — bank keys don't align between "
+            "TCFD files and DQI file even after normalisation. "
+            "See diagnostic output above."
+        )
 
     rows = []
     for pillar_col, pillar_label in [
@@ -221,11 +233,11 @@ def compute_correlations(df_tcfd: pd.DataFrame, dqi_path: str) -> pd.DataFrame:
         ]:
             r, p = stats.pearsonr(merged[pillar_col], merged[dqi_col])
             rows.append({
-                "TCFD metric":  pillar_label,
+                "TCFD metric":   pillar_label,
                 "DQI component": dqi_label,
-                "N":            len(merged),
-                "Pearson r":    round(r, 4),
-                "p-value":      round(p, 4),
+                "N":             len(merged),
+                "Pearson r":     round(r, 4),
+                "p-value":       round(p, 4),
                 "Stars": (
                     "***" if p < 0.01 else
                     "**"  if p < 0.05 else
@@ -271,11 +283,11 @@ def print_summary(df_tcfd, df_avg, df_corr, df_delta):
     print(SEP)
     print(f"  Bank-years : {len(df_tcfd)}  |  Banks : {df_tcfd['bank'].nunique()}")
     print(f"  Dominant pillar: strategy in "
-          f"{(df_tcfd['dominant_pillar']=='strategy').sum()}/{ len(df_tcfd)} bank-years\n")
+          f"{(df_tcfd['dominant_pillar']=='strategy').sum()}/{len(df_tcfd)} bank-years\n")
 
     print("  Mean pillar shares by year:")
     for yr in [2023, 2024]:
-        sub = df_tcfd[df_tcfd["year"] == yr]
+        sub   = df_tcfd[df_tcfd["year"] == yr]
         parts = "  |  ".join(
             f"{p}: {sub[f'pct_{p}'].mean():.1%}" for p in PILLARS
         )
@@ -353,7 +365,6 @@ def main():
     print(f"\nTCFD folder : {args.tcfd_dir}")
     print(f"DQI file    : {dqi_path}\n")
 
-    # ── Run pipeline ──────────────────────────────────────────────────────────
     print("Loading TCFD files...")
     df_tcfd = load_tcfd_files(args.tcfd_dir)
 
