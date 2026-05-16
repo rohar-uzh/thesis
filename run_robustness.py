@@ -42,36 +42,14 @@ DQI_DIR    = os.path.join("results", "dqi")
 CHARS_PATH = os.path.join("data", "bank_data.xlsx")
 OUT_DIR    = os.path.join("results", "regression")
 
-# Bank name mapping: DQI display names → Characteristics filename keys
-BANK_NAME_MAP = {
-    "ABN AMRO":             "ABN-AMRO",
-    "Alpha Bank":           "Alpha-Bank",
-    "BNP Paribas":          "BNP-Paribas",
-    "Banco BPM":            "Banco-BPM",
-    "Banco Sabadell":       "Banco-Sabadell",
-    "Banco Santander":      "Banco-Santander",
-    "Bank of Ireland":      "Bank-of-Ireland",
-    "Credit Agricole":      "Credit-Agricole",
-    "Danske Bank":          "Danske-Bank",
-    "Deutsche Bank":        "Deutsche-Bank",
-    "ING Group":            "ING",
-    "Intesa Sanpaolo":      "Intesa-Sanpaolo",
-    "Lloyds Banking Group": "Lloyds",
-    "Monte dei Paschi":     "Monte-dei-Paschi",
-    "NatWest Group":        "NatWest",
-    "OP Financial":         "OP-Financial",
-    "Societe Generale":     "Societe-Generale",
-    "Standard Chartered":   "Standard-Chartered",
-    "UBS Group":            "UBS",
-    "ZKB":                  "Zurcher-Kantonalbank",
-}
+# Note: DQI file and Characteristics sheet both use lowercase-hyphen bank keys
+# (e.g. 'abn-amro', 'ubs-group') — no name mapping required.
 
 
 # ── Step 1: Load & merge ───────────────────────────────────────────────────────
 
 def load_and_merge(dqi_path: str, chars_path: str) -> pd.DataFrame:
     dqi = pd.read_excel(dqi_path)
-    dqi["bank"] = dqi["bank"].replace(BANK_NAME_MAP)
 
     chars = pd.read_excel(chars_path, sheet_name="Characteristics", header=0)
     chars.columns = [c.split("\n")[0].strip() for c in chars.columns]
@@ -277,12 +255,12 @@ def main():
 
     print("\n  Notes:")
     print("  * p<0.10   ** p<0.05   *** p<0.01")
-    print("  Clustered SEs: 40 bank clusters (same bank appears in 2023 and 2024).")
+    print("  Clustered SEs: 47 bank clusters (same bank appears in 2023 and 2024).")
     print("  Year dummy = 1 for 2024. Negative coef → DQI declined in 2024 vs 2023.")
 
     # ── 3. Paired t-tests ─────────────────────────────────────────────────────
     print("\n\n" + "=" * 65)
-    print("  H1: Paired t-tests — 2024 vs 2023  (n = 40 bank pairs)")
+    print("  H1: Paired t-tests — 2024 vs 2023  (n = 47 bank pairs)")
     print("=" * 65)
 
     ttest_results = [
