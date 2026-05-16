@@ -1,31 +1,41 @@
 """
 Cross-Sectional OLS Regression: DQI on Bank Characteristics
 -------------------------------------------------------------
-Regresses the Disclosure Quality Index (DQI) on observable bank
-characteristics as specified in the thesis proposal:
+Tests H2 (cross-sectional variation in DQI) with a three-spec build-up:
 
-    DQI_i = α + β1·Size_i + β2·ROA_i + β3·CET1_i + ε_i
+    Spec 1 (Baseline)    : DQI = α + β1·Size + β2·ROA + β3·CET1 + ε
+    Spec 2 (+ ownership) : Spec 1 + γ1·D_Coop + γ2·D_State
+    Spec 3 (+ country)   : Spec 2 + country-group dummies      [STUB — see TODO]
 
-where:
-    Size  = log(Total Assets)   [main explanatory variable]
-    ROA   = Return on Assets    [profitability control]
-    CET1  = CET1 capital ratio  [capital adequacy control]
+The Listed category is the omitted baseline for the ownership dummies.
 
-Runs two specifications:
-    (1) Main:       dependent variable = dqi       (z-score composite)
-    (2) Robustness: dependent variable = dqi_alt   (raw average)
+The same three specs are mirrored with dqi_alt as the dependent variable on a
+separate sheet, for robustness.
+
+Standard errors: HC3 heteroskedasticity-robust throughout.
+
+A joint F-test (Wald) on the ownership dummies is computed and reported
+beneath the coefficient table — useful because individual t-stats may be
+marginal even when the joint contribution is informative.
 
 Inputs:
-    - DQI file:   results/dqi/<filename>.xlsx      (output of build_dqi.py)
-    - Bank chars: data/bank_data.xlsx  
+    - DQI file   : results/dqi/<file>.xlsx  (output of build_dqi.py)
+                   Required cols: bank, year, dqi, dqi_alt
+    - Bank chars : data/bank_data.xlsx, sheet "Characteristics"
+                   Required cols: bank, year, total_assets, roa, cet1,
+                                  ownership_type
+                   Optional   : country, ownership_note
 
 Output:
     - results/regression/regression_results_<date>.xlsx
+        Sheet "Buildup (DQI)"     — 3-spec build-up on z-score DQI (main)
+        Sheet "Buildup (alt)"     — same 3 specs on dqi_alt (robustness)
+        Sheet "Full Summary"      — statsmodels detail per spec
+        Sheet "Regression Data"   — merged dataset used for regression
 
 Usage:
     python run_regression.py
-    python run_regression.py --dqi results/dqi/dqi_2026-04-12.xlsx
-    python run_regression.py --chars data/bank_data.xlsx
+    python run_regression.py --dqi results/dqi/dqi_2026-05-15.xlsx
 """
 
 import os
@@ -46,407 +56,514 @@ warnings.filterwarnings("ignore")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DQI_DIR   = os.path.join("results", "dqi")
+DQI_DIR    = os.path.join("results", "dqi")
 CHARS_PATH = os.path.join("data", "bank_data.xlsx")
-OUT_DIR   = os.path.join("results", "regression")
+OUT_DIR    = os.path.join("results", "regression")
 
-# Column names expected in DQI file (from build_dqi.py)
+# Column keys
 DQI_COL     = "dqi"
 DQI_ALT_COL = "dqi_alt"
 BANK_COL    = "bank"
 YEAR_COL    = "year"
 
-# Column names expected in bank characteristics file
-CHARS_COLS = {
-    "bank":         "bank",           # must match DQI file bank names exactly
-    "year":         "year",           # 4-digit integer
-    "total_assets": "total_assets",   # in millions (or any consistent unit)
-    "roa":          "roa",            # decimal (e.g. 0.012 for 1.2%)
-    "cet1":         "cet1",           # decimal (e.g. 0.145 for 14.5%)
+# Ownership dummy levels. The first one is omitted (baseline category).
+OWN_BASELINE = "Listed"
+OWN_LEVELS   = ["Listed", "Cooperative", "StateOwned"]
+OWN_DUMMIES  = [f"own_{lvl}" for lvl in OWN_LEVELS if lvl != OWN_BASELINE]
+# → ["own_Cooperative", "own_StateOwned"]
+
+# Country-group mapping (country name in Characteristics → group label)
+COUNTRY_GROUP_MAP = {
+    "Denmark":     "Nordic",
+    "Finland":     "Nordic",
+    "Norway":      "Nordic",
+    "Sweden":      "Nordic",
+    "Austria":     "Germanic",
+    "Germany":     "Germanic",
+    "Switzerland": "Germanic",
+    "France":      "French",
+    "Italy":       "Southern",
+    "Spain":       "Southern",
+    "UK":          "UkIe",
+    "Ireland":     "UkIe",
+    "Belgium":     "Benelux",
+    "Netherlands": "Benelux",
 }
+# Germanic is omitted baseline (largest group: 11 banks, 22 obs)
+COUNTRY_BASELINE = "Germanic"
+COUNTRY_GROUPS   = ["Nordic", "French", "Southern", "UkIe", "Benelux"]
+COUNTRY_DUMMIES  = [f"cg_{g}" for g in COUNTRY_GROUPS]
+# → ["cg_Nordic", "cg_French", "cg_Southern", "cg_UkIe", "cg_Benelux"]
+
+# Predictor sets for the three specs
+PREDS_BASELINE  = ["size", "roa", "cet1"]
+PREDS_OWNERSHIP = PREDS_BASELINE + OWN_DUMMIES
+PREDS_COUNTRY   = PREDS_OWNERSHIP + COUNTRY_DUMMIES
+
+# Variable display labels for the coefficient table
+VAR_LABELS = {
+    "const":           "Constant",
+    "size":            "Size (log Total Assets)",
+    "roa":             "ROA",
+    "cet1":            "CET1 Ratio",
+    "own_Cooperative": "D(Cooperative)",
+    "own_StateOwned":  "D(State-Owned)",
+    "cg_Nordic":       "D(Nordic)",
+    "cg_French":       "D(French)",
+    "cg_Southern":     "D(Southern)",
+    "cg_UkIe":         "D(UK/IE)",
+    "cg_Benelux":      "D(Benelux)",
+}
+# Order in which variables appear in the table
+VAR_ORDER = [
+    "const", "size", "roa", "cet1",
+    "own_Cooperative", "own_StateOwned",
+    "cg_Nordic", "cg_French", "cg_Southern", "cg_UkIe", "cg_Benelux",
+]
 
 
-# ── Step 1: Find most recent DQI file ────────────────────────────────────────
+# ── Step 1: Find DQI file ─────────────────────────────────────────────────────
 
-def find_dqi_file(dqi_dir: str = DQI_DIR) -> str:
-    """Return the most recently modified DQI Excel file in the results/dqi/ folder."""
+def find_dqi_file(dqi_dir=DQI_DIR):
     pattern = os.path.join(dqi_dir, "*.xlsx")
     files = glob.glob(pattern)
     if not files:
         raise FileNotFoundError(
-            f"No .xlsx files found in '{dqi_dir}'.\n"
-            f"Run build_dqi.py first to generate the DQI file."
+            f"No .xlsx files in '{dqi_dir}'. Run build_dqi.py first."
         )
-    latest = max(files, key=os.path.getmtime)
-    return latest
+    return max(files, key=os.path.getmtime)
 
 
-# ── Step 2: Load & merge data ─────────────────────────────────────────────────
+# ── Step 2: Load data ─────────────────────────────────────────────────────────
 
-def load_dqi(filepath: str) -> pd.DataFrame:
-    """Load DQI file and validate required columns."""
+def load_dqi(filepath):
     df = pd.read_excel(filepath)
     required = {BANK_COL, YEAR_COL, DQI_COL, DQI_ALT_COL}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(
-            f"DQI file is missing columns: {missing}\n"
-            f"Expected output from build_dqi.py with columns: {required}"
-        )
-    print(f"✓ Loaded DQI file: {os.path.basename(filepath)}")
-    print(f"  Rows: {len(df):,}  |  Banks: {df[BANK_COL].nunique()}  |  "
-          f"Years: {sorted(df[YEAR_COL].unique())}")
+        raise ValueError(f"DQI file missing columns: {missing}")
+    print(f"✓ Loaded DQI: {os.path.basename(filepath)}")
+    print(f"  {len(df):,} rows  |  {df[BANK_COL].nunique()} banks  |  "
+          f"years {sorted(df[YEAR_COL].unique())}")
     print()
     return df
 
 
-def load_characteristics(filepath: str) -> pd.DataFrame:
-    """Load and validate bank characteristics file."""
+def load_characteristics(filepath):
     if not os.path.exists(filepath):
-        raise FileNotFoundError(
-            f"Bank characteristics file not found: '{filepath}'\n"
-            f"Run:  python run_regression.py --create-template\n"
-            f"to generate a blank template at that path."
-        )
+        raise FileNotFoundError(f"File not found: '{filepath}'")
     df = pd.read_excel(filepath, sheet_name="Characteristics", header=0)
-    required = set(CHARS_COLS.values())
+    required = {"bank", "year", "total_assets", "roa", "cet1", "ownership_type"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(
-            f"Bank characteristics file is missing columns: {missing}\n"
-            f"Expected columns: {list(required)}"
+            f"Characteristics sheet missing columns: {missing}\n"
+            f"Make sure ownership_type has been added (run the ownership "
+            f"classification script first)."
         )
-    print(f"✓ Loaded bank characteristics: {os.path.basename(filepath)}")
-    print(f"  Rows: {len(df):,}  |  Banks: {df['bank'].nunique()}")
+    # Verify ownership values
+    levels = set(df["ownership_type"].dropna().unique())
+    unknown = levels - set(OWN_LEVELS)
+    if unknown:
+        raise ValueError(
+            f"Unknown ownership_type values: {unknown}. "
+            f"Expected one of {OWN_LEVELS}."
+        )
+    print(f"✓ Loaded characteristics: {os.path.basename(filepath)}")
+    print(f"  {len(df):,} rows  |  {df['bank'].nunique()} banks")
+    own_dist = df.groupby("ownership_type").size().to_dict()
+    print(f"  Ownership distribution: {own_dist}")
     print()
     return df
 
 
-def merge_data(dqi_df: pd.DataFrame, chars_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Merge DQI and bank characteristics on (bank, year).
-    Adds log(total_assets) as the Size variable.
-    Drops rows with missing values in any regression variable.
-    """
+def merge_data(dqi_df, chars_df):
+    """Merge DQI and characteristics; build size and ownership dummies."""
+    chars_cols = ["bank", "year", "total_assets", "roa", "cet1", "ownership_type"]
+    # Carry country forward if present (used by Spec 3 later)
+    if "country" in chars_df.columns:
+        chars_cols.append("country")
+
     merged = pd.merge(
         dqi_df[[BANK_COL, YEAR_COL, DQI_COL, DQI_ALT_COL]],
-        chars_df[["bank", "year", "total_assets", "roa", "cet1"]],
+        chars_df[chars_cols],
         on=["bank", "year"],
         how="inner",
     )
+    if merged.empty:
+        raise ValueError("Merge produced 0 rows. Check bank/year alignment.")
 
-    n_dqi  = len(dqi_df)
-    n_merged = len(merged)
-
-    if n_merged == 0:
-        raise ValueError(
-            "Merge produced zero rows. Check that bank names and years "
-            "match exactly between the DQI file and the characteristics file."
-        )
-
-    # Size = log(total assets)
     merged["size"] = np.log(merged["total_assets"])
 
-    # Drop rows with any missing regression variable
-    reg_cols = [DQI_COL, DQI_ALT_COL, "size", "roa", "cet1"]
+    # Build ownership dummies. Listed = baseline (omitted).
+    for lvl in OWN_LEVELS:
+        if lvl == OWN_BASELINE:
+            continue
+        merged[f"own_{lvl}"] = (merged["ownership_type"] == lvl).astype(int)
+
+    # Build country-group dummies. Germanic = baseline (omitted, 11 banks / 22 obs).
+    merged["country_group"] = merged["country"].map(COUNTRY_GROUP_MAP)
+    unmapped = merged[merged["country_group"].isna()]["country"].unique()
+    if len(unmapped):
+        raise ValueError(f"Unmapped countries: {list(unmapped)}. "
+                         f"Update COUNTRY_GROUP_MAP in the config section.")
+    for grp in COUNTRY_GROUPS:
+        merged[f"cg_{grp}"] = (merged["country_group"] == grp).astype(int)
+
+    reg_cols = [DQI_COL, DQI_ALT_COL] + PREDS_COUNTRY
     before = len(merged)
     merged = merged.dropna(subset=reg_cols)
     dropped = before - len(merged)
 
-    print(f"✓ Merged dataset: {n_merged} rows matched "
-          f"({n_dqi - n_merged} DQI rows unmatched in characteristics file)")
+    print(f"✓ Merge: {len(merged)} rows matched")
     if dropped:
-        print(f"  Dropped {dropped} rows with missing values in regression variables")
-    print(f"  Final regression sample: {len(merged)} observations, "
-          f"{merged[BANK_COL].nunique()} banks")
+        print(f"  Dropped {dropped} rows with missing values")
+
+    n_total = len(merged)
+    n_coop  = int((merged["own_Cooperative"] == 1).sum())
+    n_state = int((merged["own_StateOwned"]  == 1).sum())
+    n_list  = n_total - n_coop - n_state
+    cg_counts = {grp: int((merged[f"cg_{grp}"] == 1).sum()) for grp in COUNTRY_GROUPS}
+    print(f"  Final sample: {n_total} obs, {merged[BANK_COL].nunique()} banks")
+    print(f"  Ownership cells : Listed={n_list}, Cooperative={n_coop}, "
+          f"StateOwned={n_state}")
+    print(f"  Country groups  : Germanic={n_total - sum(cg_counts.values())} (baseline), "
+          + ", ".join(f"{g}={v}" for g, v in cg_counts.items()))
     print()
 
     return merged
 
 
-# ── Step 3: OLS regression ────────────────────────────────────────────────────
+# ── Step 3: OLS runner ────────────────────────────────────────────────────────
 
-def run_ols(
-    df: pd.DataFrame,
-    dep_var: str,
-    label: str,
-) -> dict:
+def run_ols(df, dep_var, predictors, label):
     """
-    Run OLS:  dep_var = α + β1·size + β2·roa + β3·cet1 + ε
-
-    Returns a dict with model results and diagnostics.
+    Run OLS dep_var on predictors with HC3 SEs.
+    Returns dict with model, diagnostics, and (if both ownership dummies are
+    in predictors) the joint F-test on ownership.
     """
     y = df[dep_var]
-    X = sm.add_constant(df[["size", "roa", "cet1"]])
-    X.columns = ["const", "Size (log TA)", "ROA", "CET1"]
+    X = sm.add_constant(df[predictors])
+    model = sm.OLS(y, X).fit(cov_type="HC3")
 
-    model = sm.OLS(y, X).fit(cov_type="HC3")   # heteroskedasticity-robust SEs
-
-    # Breusch-Pagan test for heteroskedasticity
+    # Diagnostics
     bp_stat, bp_pval, _, _ = het_breuschpagan(model.resid, model.model.exog)
-
-    # Durbin-Watson (cross-section — informational only)
     dw = durbin_watson(model.resid)
 
-    print(f"{'='*60}")
-    print(f"  Specification: {label}")
-    print(f"  Dependent variable: {dep_var}")
-    print(f"  N = {int(model.nobs)}   R² = {model.rsquared:.4f}   "
-          f"Adj. R² = {model.rsquared_adj:.4f}")
-    print(f"{'='*60}")
-    print(model.summary2(float_format="%.4f"))
-    print(f"  Breusch-Pagan test  stat={bp_stat:.3f}  p={bp_pval:.3f}")
-    print(f"  Durbin-Watson              {dw:.3f}")
-    print()
+    # Joint F-test on ownership dummies, if both are in the spec
+    own_test = None
+    own_in_spec = [v for v in OWN_DUMMIES if v in predictors]
+    if len(own_in_spec) >= 2:
+        hypothesis = ", ".join(f"{v} = 0" for v in own_in_spec)
+        test = model.wald_test(hypothesis, use_f=True)
+        own_test = {
+            "F":        float(np.squeeze(test.statistic)),
+            "p":        float(np.squeeze(test.pvalue)),
+            "df_num":   int(test.df_num),
+            "df_denom": int(test.df_denom),
+        }
+
+    # Joint F-test on country dummies, if any are in the spec
+    cg_test = None
+    cg_in_spec = [v for v in COUNTRY_DUMMIES if v in predictors]
+    if len(cg_in_spec) >= 1:
+        hypothesis = ", ".join(f"{v} = 0" for v in cg_in_spec)
+        test = model.wald_test(hypothesis, use_f=True)
+        cg_test = {
+            "F":        float(np.squeeze(test.statistic)),
+            "p":        float(np.squeeze(test.pvalue)),
+            "df_num":   int(test.df_num),
+            "df_denom": int(test.df_denom),
+        }
 
     return {
-        "label":    label,
-        "dep_var":  dep_var,
-        "model":    model,
-        "bp_stat":  bp_stat,
-        "bp_pval":  bp_pval,
-        "dw":       dw,
+        "label":      label,
+        "dep_var":    dep_var,
+        "predictors": predictors,
+        "model":      model,
+        "bp_stat":    bp_stat,
+        "bp_pval":    bp_pval,
+        "dw":         dw,
+        "own_test":   own_test,
+        "cg_test":    cg_test,
     }
 
 
-# ── Step 4: Format results table ─────────────────────────────────────────────
+# ── Step 4: Console printing ──────────────────────────────────────────────────
 
-def build_results_table(results_list: list) -> pd.DataFrame:
-    """
-    Build a side-by-side coefficient table across specifications.
-    Format: coef (std err) with significance stars.
-    """
-    rows = []
-
-    var_labels = {
-        "const":          "Constant",
-        "Size (log TA)":  "Size (log Total Assets)",
-        "ROA":            "ROA",
-        "CET1":           "CET1 Ratio",
-    }
-
-    for res in results_list:
-        m = res["model"]
-        col_name = res["label"]
-
-        for var in m.params.index:
-            coef  = m.params[var]
-            se    = m.bse[var]
-            pval  = m.pvalues[var]
-            stars = _stars(pval)
-            rows.append({
-                "Variable":      var_labels.get(var, var),
-                "Specification": col_name,
-                "Coefficient":   f"{coef:.4f}{stars}",
-                "Std. Error":    f"({se:.4f})",
-                "p-value":       f"{pval:.4f}",
-            })
-
-    # Pivot to wide format (one column per specification)
-    coef_wide = (
-        pd.DataFrame(rows)
-        .pivot(index="Variable", columns="Specification", values="Coefficient")
-    )
-    se_wide = (
-        pd.DataFrame(rows)
-        .pivot(index="Variable", columns="Specification", values="Std. Error")
-    )
-
-    # Interleave coefficient and SE rows
-    out_rows = []
-    for var in var_labels.values():
-        if var in coef_wide.index:
-            coef_row = coef_wide.loc[var].to_dict()
-            coef_row["Variable"] = var
-            se_row = se_wide.loc[var].to_dict()
-            se_row["Variable"] = ""
-            out_rows.append(coef_row)
-            out_rows.append(se_row)
-
-    table = pd.DataFrame(out_rows).set_index("Variable")
-
-    # Append fit statistics
-    fit_rows = []
-    for res in results_list:
-        m = res["model"]
-        fit_rows.append({
-            "Specification": res["label"],
-            "N":             int(m.nobs),
-            "R²":            f"{m.rsquared:.4f}",
-            "Adj. R²":       f"{m.rsquared_adj:.4f}",
-            "BP p-value":    f"{res['bp_pval']:.3f}",
-        })
-    fit_df = (
-        pd.DataFrame(fit_rows)
-        .set_index("Specification")
-        .T
-    )
-    fit_df.index.name = "Variable"
-
-    return table, fit_df
-
-
-def _stars(pval: float) -> str:
-    if pval < 0.01:
-        return "***"
-    elif pval < 0.05:
-        return "**"
-    elif pval < 0.10:
-        return "*"
+def _stars(p):
+    if pd.isna(p):
+        return ""
+    if p < 0.01:   return "***"
+    if p < 0.05:   return "**"
+    if p < 0.10:   return "*"
     return ""
 
 
-# ── Step 5: Save results ──────────────────────────────────────────────────────
+def print_spec(res):
+    m = res["model"]
+    sep = "=" * 70
+    print(f"\n{sep}")
+    print(f"  {res['label']}    [dep = {res['dep_var']}]")
+    print(f"  N = {int(m.nobs)}   R² = {m.rsquared:.4f}   "
+          f"Adj. R² = {m.rsquared_adj:.4f}")
+    print(sep)
+    print(f"  {'Variable':<28} {'Coef':>10}  {'HC3 SE':>10}  "
+          f"{'t':>7}  {'p':>7}")
+    print(f"  {'-'*68}")
+    for v in m.params.index:
+        label = VAR_LABELS.get(v, v)
+        c = m.params[v]; se = m.bse[v]; t = m.tvalues[v]; p = m.pvalues[v]
+        print(f"  {label:<28} {c:>10.4f}  {se:>10.4f}  {t:>7.3f}  "
+              f"{p:>7.4f} {_stars(p)}")
+    print(f"  {'-'*68}")
+    if res["own_test"] is not None:
+        t = res["own_test"]
+        print(f"  Joint F-test ownership dummies : "
+              f"F({t['df_num']}, {t['df_denom']}) = {t['F']:.3f}, "
+              f"p = {t['p']:.4f} {_stars(t['p'])}")
+    if res["cg_test"] is not None:
+        t = res["cg_test"]
+        print(f"  Joint F-test country dummies   : "
+              f"F({t['df_num']}, {t['df_denom']}) = {t['F']:.3f}, "
+              f"p = {t['p']:.4f} {_stars(t['p'])}")
+    print(f"  Breusch-Pagan p = {res['bp_pval']:.3f}  |  DW = {res['dw']:.3f}")
 
-def save_results(
-    merged_df: pd.DataFrame,
-    results_list: list,
-    coef_table: pd.DataFrame,
-    fit_table: pd.DataFrame,
-    out_dir: str = OUT_DIR,
-) -> str:
-    """Save regression output to Excel with multiple sheets."""
+
+# ── Step 5: Build-up table ────────────────────────────────────────────────────
+
+def build_buildup_table(results_list):
+    """
+    Wide build-up table: columns = specifications, rows = variables.
+    Each variable contributes two rows: coefficient (with stars) and SE in
+    parentheses. Variables not in a given spec show '—'.
+
+    Returns (coef_table_df, fit_table_df).
+    """
+    spec_labels = [r["label"] for r in results_list]
+
+    # ---- Coefficient block ----
+    coef_rows = []   # list of dicts: {Variable, spec1, spec2, spec3}
+
+    for v in VAR_ORDER:
+        # Skip variables that no spec uses (defensive)
+        if not any(v in r["model"].params.index for r in results_list):
+            continue
+
+        coef_row = {"Variable": VAR_LABELS.get(v, v)}
+        se_row   = {"Variable": ""}
+
+        for r in results_list:
+            m = r["model"]
+            if v in m.params.index:
+                c = m.params[v]; se = m.bse[v]; p = m.pvalues[v]
+                coef_row[r["label"]] = f"{c:.4f}{_stars(p)}"
+                se_row[r["label"]]   = f"({se:.4f})"
+            else:
+                coef_row[r["label"]] = "—"
+                se_row[r["label"]]   = ""
+        coef_rows.append(coef_row)
+        coef_rows.append(se_row)
+
+    coef_df = pd.DataFrame(coef_rows).set_index("Variable")
+
+    # ---- Fit-stats block ----
+    fit_rows = [
+        {"Variable": "N",               **{r["label"]: int(r["model"].nobs)             for r in results_list}},
+        {"Variable": "R²",              **{r["label"]: f"{r['model'].rsquared:.4f}"      for r in results_list}},
+        {"Variable": "Adj. R²",         **{r["label"]: f"{r['model'].rsquared_adj:.4f}" for r in results_list}},
+        {"Variable": "Breusch-Pagan p", **{r["label"]: f"{r['bp_pval']:.3f}"            for r in results_list}},
+    ]
+    own_row = {"Variable": "Ownership joint F-test (p)"}
+    for r in results_list:
+        own_row[r["label"]] = (f"{r['own_test']['p']:.4f}{_stars(r['own_test']['p'])}"
+                               if r["own_test"] is not None else "—")
+    fit_rows.append(own_row)
+
+    cg_row = {"Variable": "Country joint F-test (p)"}
+    for r in results_list:
+        cg_row[r["label"]] = (f"{r['cg_test']['p']:.4f}{_stars(r['cg_test']['p'])}"
+                              if r["cg_test"] is not None else "—")
+    fit_rows.append(cg_row)
+
+    fit_df = pd.DataFrame(fit_rows).set_index("Variable")
+
+    return coef_df, fit_df
+
+
+def print_buildup_table(coef_df, fit_df, title):
+    print("\n" + "=" * 80)
+    print(f"  {title}")
+    print("=" * 80)
+    print(coef_df.to_string())
+    print("  " + "-" * 76)
+    print(fit_df.to_string())
+
+
+# ── Step 6: Save to Excel ─────────────────────────────────────────────────────
+
+def save_results(merged_df, results_main, results_alt,
+                 coef_main, fit_main, coef_alt, fit_alt, out_dir=OUT_DIR):
     os.makedirs(out_dir, exist_ok=True)
-    today = date.today().isoformat()
+    today    = date.today().isoformat()
     out_path = os.path.join(out_dir, f"regression_results_{today}.xlsx")
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        # Sheet 1: Build-up on z-score DQI (main)
+        coef_main.to_excel(writer, sheet_name="Buildup (DQI)", startrow=1)
+        fit_main.to_excel(writer, sheet_name="Buildup (DQI)",
+                          startrow=len(coef_main) + 4)
+        # Add title on row 0
+        ws = writer.sheets["Buildup (DQI)"]
+        ws.cell(row=1, column=1,
+                value="Build-up regression — Main (dep var: dqi z-score)")
 
-        # Sheet 1: Coefficient table
-        coef_table.to_excel(writer, sheet_name="Coefficients")
-        fit_table.to_excel(writer, sheet_name="Coefficients", startrow=len(coef_table) + 3)
+        # Sheet 2: Build-up on dqi_alt (robustness)
+        coef_alt.to_excel(writer, sheet_name="Buildup (alt)", startrow=1)
+        fit_alt.to_excel(writer, sheet_name="Buildup (alt)",
+                         startrow=len(coef_alt) + 4)
+        ws = writer.sheets["Buildup (alt)"]
+        ws.cell(row=1, column=1,
+                value="Build-up regression — Robustness (dep var: dqi_alt)")
 
-        # Sheet 2: Full statsmodels summary per specification
+        # Sheet 3: full statsmodels detail
         row = 0
-        for res in results_list:
-            summary_df = _summary_to_df(res["model"], res["label"])
-            summary_df.to_excel(writer, sheet_name="Full Summary", startrow=row, index=False)
+        for r in results_main + results_alt:
+            summary_df = _summary_to_df(r)
+            summary_df.to_excel(writer, sheet_name="Full Summary",
+                                startrow=row, index=False)
             row += len(summary_df) + 3
 
-        # Sheet 3: Regression sample data
+        # Sheet 4: regression data
         merged_df.to_excel(writer, sheet_name="Regression Data", index=False)
 
-    print(f"✓ Results saved to: {out_path}")
+    print(f"\n✓ Results saved to: {out_path}")
     return out_path
 
 
-def _summary_to_df(model, label: str) -> pd.DataFrame:
-    """Convert statsmodels OLS result to a flat DataFrame for Excel export."""
-    rows = [{"Item": f"=== {label} ===", "Value": ""}]
-    rows.append({"Item": "N",       "Value": int(model.nobs)})
-    rows.append({"Item": "R²",      "Value": round(model.rsquared, 6)})
-    rows.append({"Item": "Adj. R²", "Value": round(model.rsquared_adj, 6)})
-    rows.append({"Item": "F-stat",  "Value": round(model.fvalue, 4)})
-    rows.append({"Item": "F p-val", "Value": round(model.f_pvalue, 4)})
+def _summary_to_df(res):
+    m = res["model"]
+    rows = [{"Item": f"=== {res['label']}  (dep = {res['dep_var']}) ===",
+             "Value": ""}]
+    rows.append({"Item": "N",       "Value": int(m.nobs)})
+    rows.append({"Item": "R²",      "Value": round(m.rsquared, 6)})
+    rows.append({"Item": "Adj. R²", "Value": round(m.rsquared_adj, 6)})
+    rows.append({"Item": "F-stat",  "Value": round(m.fvalue, 4)})
+    rows.append({"Item": "F p-val", "Value": round(m.f_pvalue, 4)})
+    rows.append({"Item": "BP p-val", "Value": round(res["bp_pval"], 4)})
+    rows.append({"Item": "DW",       "Value": round(res["dw"], 4)})
+    if res["own_test"]:
+        t = res["own_test"]
+        rows.append({"Item": "Ownership joint F",
+                     "Value": f"F({t['df_num']},{t['df_denom']})={t['F']:.4f}, "
+                              f"p={t['p']:.4f}"})
     rows.append({"Item": "--- Coefficients ---", "Value": ""})
-    for var in model.params.index:
+    for v in m.params.index:
         rows.append({
-            "Item":  var,
-            "Value": (f"coef={model.params[var]:.6f}  "
-                      f"se={model.bse[var]:.6f}  "
-                      f"t={model.tvalues[var]:.4f}  "
-                      f"p={model.pvalues[var]:.4f}"
-                      f"  [{model.conf_int().loc[var,0]:.4f}, "
-                      f"{model.conf_int().loc[var,1]:.4f}]"),
+            "Item":  VAR_LABELS.get(v, v),
+            "Value": (f"coef={m.params[v]:.6f}  se={m.bse[v]:.6f}  "
+                      f"t={m.tvalues[v]:.4f}  p={m.pvalues[v]:.4f}  "
+                      f"[{m.conf_int().loc[v,0]:.4f}, "
+                      f"{m.conf_int().loc[v,1]:.4f}]"),
         })
     return pd.DataFrame(rows)
 
 
-# ── Template generator ────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def create_characteristics_template(out_path: str = CHARS_PATH):
-    """
-    Generate a blank bank characteristics Excel template.
-    Includes column headers and a few example rows.
-    """
+    """Generate a blank bank characteristics template (ownership columns included)."""
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-
-    example_data = {
-        "bank":         ["UBS", "UBS", "HSBC", "HSBC", "BNP Paribas", "BNP Paribas"],
-        "year":         [2023,   2024,  2023,   2024,   2023,           2024],
-        "total_assets": [1700000, 1750000, 3000000, 3100000, 2900000, 2950000],
-        # ↑ in millions of EUR/USD — use a consistent currency across all banks
-        "roa":  [0.012, 0.013, 0.009, 0.010, 0.008, 0.009],
-        # ↑ Return on Assets as a decimal (e.g. 0.012 = 1.2%)
-        "cet1": [0.145, 0.147, 0.148, 0.150, 0.135, 0.138],
-        # ↑ CET1 ratio as a decimal (e.g. 0.145 = 14.5%)
+    example = {
+        "bank":           ["ubs-group", "ubs-group", "rabobank", "rabobank"],
+        "country":        ["Switzerland", "Switzerland", "Netherlands", "Netherlands"],
+        "year":           [2023, 2024, 2023, 2024],
+        "total_assets":   [1551.8, 1512.3, 597.8, 612.1],   # EUR billions
+        "roa":            [0.0194, 0.0031, 0.0042, 0.0045],  # decimal
+        "cet1":           [0.143, 0.144, 0.188, 0.191],      # decimal
+        "ownership_type": ["Listed", "Listed", "Cooperative", "Cooperative"],
+        "ownership_note": ["", "", "Member-owned cooperative", "Member-owned cooperative"],
     }
-
-    df = pd.DataFrame(example_data)
-    df.to_excel(out_path, index=False)
-
+    pd.DataFrame(example).to_excel(out_path, sheet_name="Characteristics", index=False)
     print(f"✓ Template created: {out_path}")
-    print()
-    print("  Fill in your bank data:")
-    print("    bank         — must match bank names in the DQI file exactly")
-    print("    year         — 4-digit year (2023 or 2024)")
-    print("    total_assets — in millions, consistent currency across all banks")
-    print("    roa          — as decimal (e.g. 0.012 for 1.2%)")
-    print("    cet1         — as decimal (e.g. 0.145 for 14.5%)")
-    print()
-    print("  Data source: Bloomberg, bank annual reports, or ECB SDW.")
+    print("  Fill in all 47 banks × 2 years = 94 rows.")
+    print("  ownership_type: one of Listed / Cooperative / StateOwned")
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cross-sectional OLS regression of DQI on bank characteristics."
+        description="Cross-sectional OLS regression of DQI on bank characteristics "
+                    "with three-spec build-up (baseline → +ownership → +country)."
     )
-    parser.add_argument(
-        "--dqi", default=None,
-        help="Path to DQI Excel file. Auto-detects most recent file in results/dqi/ if omitted."
-    )
-    parser.add_argument(
-        "--chars", default=CHARS_PATH,
-        help=f"Path to bank characteristics Excel. Default: {CHARS_PATH}"
-    )
-    parser.add_argument(
-        "--create-template", action="store_true",
-        help=f"Create a blank bank characteristics template at --chars path and exit."
-    )
+    parser.add_argument("--dqi",   default=None,       help="Path to DQI Excel file.")
+    parser.add_argument("--chars", default=CHARS_PATH, help=f"Default: {CHARS_PATH}")
+    parser.add_argument("--create-template", action="store_true",
+                        help="Create a blank characteristics template and exit.")
     args = parser.parse_args()
 
-    # ── Template mode ────────────────────────────────────────────────────────
     if args.create_template:
         create_characteristics_template(args.chars)
-        sys.exit(0)
+        import sys; sys.exit(0)
 
-    # ── Normal mode ──────────────────────────────────────────────────────────
     print()
-    print("=" * 60)
-    print("  DQI Regression: Climate Disclosure Quality")
-    print("=" * 60)
+    print("=" * 70)
+    print("  H2 Regression: DQI on Bank Characteristics — Three-Spec Build-up")
+    print("=" * 70)
     print()
 
-    # Load data
     dqi_path = args.dqi or find_dqi_file()
     dqi_df   = load_dqi(dqi_path)
     chars_df = load_characteristics(args.chars)
     merged   = merge_data(dqi_df, chars_df)
 
-    # Run both specifications
-    results = []
-    results.append(run_ols(merged, DQI_COL,     label="(1) Main DQI (z-score)"))
-    results.append(run_ols(merged, DQI_ALT_COL, label="(2) Robustness DQI (raw avg)"))
+    # ── Spec definitions ─────────────────────────────────────────────────────
+    # Additive build-up: each column adds variables to the previous spec.
+    specs = [
+        ("(1) Baseline",         PREDS_BASELINE),
+        ("(2) + Ownership",      PREDS_OWNERSHIP),
+        ("(3) + Country groups", PREDS_COUNTRY),
+    ]
 
-    # Build output table and save
-    coef_table, fit_table = build_results_table(results)
-    out_path = save_results(merged, results, coef_table, fit_table)
+    # ── Main regressions on z-score DQI ──────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("  MAIN: dependent variable = dqi (z-score composite)")
+    print("=" * 70)
+    results_main = []
+    for label, preds in specs:
+        r = run_ols(merged, DQI_COL, preds, label)
+        results_main.append(r)
+        print_spec(r)
 
-    print()
-    print("--- Coefficient Table ---")
-    print(coef_table.to_string())
-    print()
-    print("--- Fit Statistics ---")
-    print(fit_table.to_string())
-    print()
-    print(f"Done. Results saved to: {out_path}")
+    coef_main, fit_main = build_buildup_table(results_main)
+    print_buildup_table(coef_main, fit_main,
+                        title="Main build-up — dep var: dqi (z-score)")
+
+    # ── Robustness regressions on dqi_alt ────────────────────────────────────
+    print("\n\n" + "=" * 70)
+    print("  ROBUSTNESS: dependent variable = dqi_alt (raw average)")
+    print("=" * 70)
+    results_alt = []
+    for label, preds in specs:
+        r = run_ols(merged, DQI_ALT_COL, preds, label)
+        results_alt.append(r)
+        print_spec(r)
+
+    coef_alt, fit_alt = build_buildup_table(results_alt)
+    print_buildup_table(coef_alt, fit_alt,
+                        title="Robustness build-up — dep var: dqi_alt")
+
+    # ── Save ─────────────────────────────────────────────────────────────────
+    out_path = save_results(merged, results_main, results_alt,
+                            coef_main, fit_main, coef_alt, fit_alt)
+
     print()
     print("Notes:")
     print("  * p<0.10   ** p<0.05   *** p<0.01")
-    print("  Standard errors are HC3 heteroskedasticity-robust.")
-    print("  Size = log(Total Assets). DQI_alt = raw average (robustness).")
+    print("  Standard errors are HC3 heteroskedasticity-robust throughout.")
+    print("  Baseline ownership category : Listed (omitted).")
+    print("  Baseline country group      : Germanic (AT/CH/DE, 11 banks, 22 obs, omitted).")
+    print("  Ownership cells : Cooperative=8 banks (16 obs), StateOwned=6 banks (12 obs).")
+    print("  Country cells   : Nordic=8, French=6, Southern=9, UK/IE=8, Benelux=5 banks.")
 
 
 if __name__ == "__main__":
