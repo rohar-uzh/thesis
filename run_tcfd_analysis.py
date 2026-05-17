@@ -56,12 +56,15 @@ DETECTOR_POSITIVE = "yes"
 
 def _norm(key) -> str:
     """
-    Normalise a bank key for merging: lowercase and strip whitespace.
-    Both TCFD files and the DQI file use filename-derived keys (e.g. 'UBS-Group',
-    'ubs-group') that differ only in casing — this makes the merge case-insensitive
-    without requiring a hardcoded name map.
+    Normalise a bank key for merging: lowercase, strip whitespace, and collapse
+    hyphens and spaces to nothing.
+
+    TCFD output files derive bank names from the Colab notebook and store them
+    with spaces (e.g. 'abn amro'), whereas the DQI file uses PDF-filename-derived
+    keys with hyphens (e.g. 'abn-amro').  Stripping both separators makes the
+    merge key format-agnostic: 'abn amro' and 'abn-amro' both become 'abnamro'.
     """
-    return str(key).strip().lower()
+    return re.sub(r'[\s\-]+', '', str(key)).strip().lower()
 
 
 # ── Step 1: Load all TCFD files ────────────────────────────────────────────────
