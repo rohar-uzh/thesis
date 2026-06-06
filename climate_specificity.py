@@ -7,9 +7,6 @@ using the ClimateBERT distilroberta-base-climate-specificity model.
 Only runs on paragraphs already labelled climate-related by the detector
 (detector_label == 'yes'). Non-climate rows are passed through unchanged.
 
-Usage (from Colab notebook):
-    from climate_specificity import run_specificity_classification
-    df, output_file = run_specificity_classification("data/detected/UBS_2023_Annual_detected_2026-04-12.xlsx")
 """
 
 import os
@@ -25,8 +22,7 @@ from transformers import (
 
 # ── Model config ──────────────────────────────────────────────────────────────
 MODEL_NAME = "climatebert/distilroberta-base-climate-specificity"
-BATCH_SIZE = 32
-
+BATCH_SIZE = 64  
 
 # ── Step 1: Load model ────────────────────────────────────────────────────────
 
@@ -157,6 +153,8 @@ def run_specificity_classification(
     input_path: str,
     output_path: str = None,
     batch_size: int = BATCH_SIZE,
+    clf=None,
+    id2label: dict = None,
 ) -> tuple:
     """
     Full specificity pipeline: load → classify climate rows → save → return.
@@ -171,7 +169,14 @@ def run_specificity_classification(
     output_path : str, optional
         Where to save results. Auto-generated if not provided.
     batch_size : int
-        Inference batch size (default 32).
+        Inference batch size (default 64).
+    clf : HuggingFace pipeline, optional
+        Pre-loaded classifier from load_classifier(). If None, the model is
+        loaded automatically. Pass a pre-loaded clf when processing multiple
+        files in sequence to avoid reloading the model for every file.
+    id2label : dict, optional
+        Label mapping returned by load_classifier(). Required when clf is
+        provided.
 
     Returns
     -------
@@ -184,7 +189,10 @@ def run_specificity_classification(
 
     # Load and validate
     df = load_and_validate_data(input_path)
-    clf, id2label = load_classifier()
+
+    # Load model only if not pre-loaded
+    if clf is None:
+        clf, id2label = load_classifier()
 
     # Filter to climate-related paragraphs only
     climate_mask = df["detector_label"] == "yes"

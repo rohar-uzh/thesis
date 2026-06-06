@@ -3,10 +3,6 @@ ClimateBERT Climate Detector Pipeline
 --------------------------------------
 Classifies paragraphs as climate-related or not using the
 ClimateBERT distilroberta-base-climate-detector model.
-
-Usage (from Colab notebook):
-    from climate_detector import run_climate_detection
-    df, output_file = run_climate_detection("data/my_paragraphs.xlsx")
 """
 
 import os
@@ -22,7 +18,7 @@ from transformers import (
 
 # ── Model config ──────────────────────────────────────────────────────────────
 MODEL_NAME = "climatebert/distilroberta-base-climate-detector"
-BATCH_SIZE = 32
+BATCH_SIZE = 64  
 
 
 # ── Step 1: Load model ────────────────────────────────────────────────────────
@@ -133,7 +129,7 @@ def generate_output_filename(input_path: str) -> str:
         base = base[:-11]
 
     today = date.today().isoformat()
-    output_dir = os.path.join("results", "detected")
+    output_dir = os.path.join("results", "detector")
     os.makedirs(output_dir, exist_ok=True)
 
     return os.path.join(output_dir, f"{base}_detected_{today}.xlsx")
@@ -145,6 +141,8 @@ def run_climate_detection(
     input_path: str,
     output_path: str = None,
     batch_size: int = BATCH_SIZE,
+    clf=None,
+    id2label: dict = None,
 ) -> tuple:
     """
     Full detection pipeline: load → classify → save → return.
@@ -156,7 +154,14 @@ def run_climate_detection(
     output_path : str, optional
         Where to save results. Auto-generated if not provided.
     batch_size : int
-        Number of paragraphs per inference batch (default 32).
+        Number of paragraphs per inference batch (default 64).
+    clf : HuggingFace pipeline, optional
+        Pre-loaded classifier from load_classifier(). If None, the model is
+        loaded automatically. Pass a pre-loaded clf when processing multiple
+        files in sequence to avoid reloading the model for every file.
+    id2label : dict, optional
+        Label mapping returned by load_classifier(). Required when clf is
+        provided.
 
     Returns
     -------
@@ -168,9 +173,12 @@ def run_climate_detection(
     if output_path is None:
         output_path = generate_output_filename(input_path)
 
-    # Load data and model
+    # Load data
     df = load_and_clean_data(input_path)
-    clf, id2label = load_classifier()
+
+    # Load model only if not pre-loaded
+    if clf is None:
+        clf, id2label = load_classifier()
 
     # Run inference
     texts = df["paragraph"].tolist()
