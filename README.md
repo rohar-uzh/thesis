@@ -14,7 +14,6 @@ thesis/
 ├── run_regression.py               # Cross-sectional OLS regression (HC3 SEs)
 ├── run_robustness.py               # Robustness checks and H1 paired t-tests
 ├── run_tcfd_analysis.py            # TCFD descriptive analysis and correlations
-├── count_paragraphs.py             # Paragraph count diagnostics across reports
 ├── requirements.txt
 ├── .gitignore
 │
@@ -30,7 +29,6 @@ thesis/
 │   └── pdfs/                       # Raw bank reports (BankName_Year_Type.pdf)
 │
 └── results/                        # All outputs (gitignored)
-    ├── paragraph_counts.csv        # Output of count_paragraphs.py
     ├── parsed/                     # PDF parser output (→ input for detector)
     ├── detector/                   # Climate detection output (→ input for steps 3–5)
     ├── specificity/                # Specificity classifier output
