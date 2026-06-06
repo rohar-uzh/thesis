@@ -18,7 +18,7 @@ thesis/
 ├── requirements.txt
 ├── .gitignore
 │
-├── notebooks/                      # Colab notebooks (gitignored — managed separately)
+├── notebooks/                      # Colab notebooks — open directly via badge links below
 │   ├── climatebert_detector_colab.ipynb
 │   ├── climatebert_specificity_colab.ipynb
 │   ├── climatebert_commitment_colab.ipynb
@@ -39,6 +39,25 @@ thesis/
     ├── dqi/                        # Disclosure Quality Index output
     └── regression/                 # Regression and robustness results
 ```
+
+## Reproducibility
+
+All code used in the thesis is available in this repository. The Colab notebooks can be opened directly in Google Colab without any local setup — click the badge at the top of each notebook, or use the links below.
+
+| Notebook | Purpose | Open |
+|---|---|---|
+| `climatebert_detector_colab.ipynb` | Step 2: Climate paragraph detection | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rohar-uzh/thesis/blob/main/notebooks/climatebert_detector_colab.ipynb) |
+| `climatebert_specificity_colab.ipynb` | Step 3: Specificity classification | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rohar-uzh/thesis/blob/main/notebooks/climatebert_specificity_colab.ipynb) |
+| `climatebert_commitment_colab.ipynb` | Step 4: Commitment classification | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rohar-uzh/thesis/blob/main/notebooks/climatebert_commitment_colab.ipynb) |
+| `climatebert_tcfd_colab.ipynb` | Step 5: TCFD pillar classification | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rohar-uzh/thesis/blob/main/notebooks/climatebert_tcfd_colab.ipynb) |
+
+**To reproduce the full pipeline:**
+1. Obtain the 94 annual report PDFs (listed in Appendix A of the thesis) and place them in `data/pdfs/`
+2. Run `pdfparser.ipynb` to extract paragraphs → `results/parsed/`
+3. Run the four Colab notebooks in the order above (steps 3 and 4 are independent and can run in parallel)
+4. Run `build_dqi.py`, `run_regression.py`, `run_robustness.py`, and `run_tcfd_analysis.py` locally
+
+Notebooks are committed with cell outputs stripped. Run each notebook top to bottom in a fresh Colab session to regenerate results.
 
 ## Workflow
 
